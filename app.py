@@ -10,6 +10,17 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# Required environment variables
+required_env_vars = [
+    "OPENAI_API_KEY",
+    "TELEGRAM_SERVICE_URL"
+]
+
+# Validate environment variables
+for var in required_env_vars:
+    if not os.getenv(var):
+        raise RuntimeError(f"Missing required environment variable: {var}")
+
 @app.post("/analyze")
 async def analyze_sentiment(request: Request):
     try:
@@ -25,6 +36,21 @@ async def analyze_sentiment(request: Request):
         sentiment = await analyze_market_sentiment(formatted_symbol)
         logger.info(f"Sentiment analysis completed for {symbol}")
         
+        # Forward analysis to Telegram Service
+        try:
+            telegram_url = os.getenv('TELEGRAM_SERVICE_URL')
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"{telegram_url}/send",
+                    json={
+                        "symbol": symbol,
+                        "sentiment": sentiment,
+                        "type": "market_sentiment"
+                    }
+                )
+        except Exception as e:
+            logger.error(f"Error forwarding to Telegram Service: {str(e)}")
+        
         return {"symbol": symbol, "sentiment": sentiment}
     except Exception as e:
         logger.error(f"Error in analyze_sentiment: {str(e)}")
@@ -32,7 +58,14 @@ async def analyze_sentiment(request: Request):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "service": "news-ai-service",
+        "dependencies": {
+            "openai": bool(os.getenv('OPENAI_API_KEY')),
+            "telegram": bool(os.getenv('TELEGRAM_SERVICE_URL'))
+        }
+    }
 
 async def analyze_market_sentiment(symbol):
     """Analyze market sentiment using OpenAI API"""
@@ -100,4 +133,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 5000))
     logger.info(f"Starting news service on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port) 
+    uvicorn.run(app, host="0.0.0.0", port=port)
